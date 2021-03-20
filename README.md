@@ -37,7 +37,7 @@ Though patterns and principles presented here are **framework/language agnostic*
   - [Infrastructure](#Infrastructure)
     - [Adapters](#Adapters)
     - [Repositories](#Repositories)
-    - [ORM Entities](#ORM-Entities)
+    - [Persistence models](#Persistence-models)
     - [Other things that can be a part of Infrastructure layer](#Other-things-that-can-be-a-part-of-Infrastructure-layer)
   - [Recommendations for smaller APIs](#Recommendations-for-smaller-APIs)
 
@@ -59,7 +59,7 @@ Though patterns and principles presented here are **framework/language agnostic*
   - [Rate Limiting](#Rate-Limiting)
   - [Code Generation](#Code-Generation)
   - [Custom utility types](#Custom-utility-types)
-  - [Pre-push/pre-commit hooks](#Pre-push/pre-commit-hooks)
+  - [Pre-push/pre-commit hooks](#Pre-pushpre-commit-hooks)
   - [Prevent massive inheritance chains](#Prevent-massive-inheritance-chains)
   - [Conventional commits](#Conventional-commits)
 
@@ -142,17 +142,12 @@ Each module is separated in layers described below.
 
 # Application Core
 
-This is the core of the system which is built using [DDD building blocks](https://dzone.com/articles/ddd-part-ii-ddd-building-blocks).
-
-**Dependencies point inwards**. Outer layers can depend on inner layers, but inner layers never depend on outer layers.
-
-Core layers shouldn't depend on frameworks or access external resources. Any external calls to out-of-process resources/retrieval of data from remote processes should be done through `ports` (interfaces), with class implementations created somewhere in infrastructure layer and injected into application's core ([Dependency Injection](https://en.wikipedia.org/wiki/Dependency_injection) and [Dependency Inversion](https://en.wikipedia.org/wiki/Dependency_inversion_principle)).
-
-## Application's Core consists of:
+This is the core of the system which is built using [DDD building blocks](https://dzone.com/articles/ddd-part-ii-ddd-building-blocks):
 
 ### Domain layer:
 
 - Entities
+- Aggregates
 - Domain Services
 - Value Objects
 
@@ -162,7 +157,9 @@ Core layers shouldn't depend on frameworks or access external resources. Any ext
 - Commands and Queries
 - Ports
 
-This is just a short list the main things that may reside in here. More building blocks may be added if needed.
+_More building blocks may be added if needed._
+
+In Application Core **dependencies point inwards**. Outer layers can depend on inner layers, but inner layers never depend on outer layers. Also, Application Core shouldn't depend on frameworks or access external resources directly. Any external calls to out-of-process resources/retrieval of data from remote processes should be done through `ports` (interfaces), with class implementations created somewhere in infrastructure layer and injected into application's core ([Dependency Injection](https://en.wikipedia.org/wiki/Dependency_injection) and [Dependency Inversion](https://en.wikipedia.org/wiki/Dependency_inversion_principle)). This makes business logic independent of technology, facilitates testing, allows to plug/unplug/swap any external resources easily making application modular and [loosely coupled](https://en.wikipedia.org/wiki/Loose_coupling).
 
 ---
 
@@ -233,7 +230,12 @@ This principle is called [Command–Query Separation(CQS)](https://en.wikipedia.
 
 - `Commands` are used for state-changing actions, like creating new user and saving it to the database. Create, Update and Delete operations are considered as state-changing.
 
-Data retrieval is responsibility of `Queries`, so `Command` methods should not return anything. Though, if needed, returning a bare minimum (like `ID` of a created item or a confirmation message) may not be a bad idea.
+Data retrieval is responsibility of `Queries`, so `Command` methods should not return anything. There are some options on how to achieve this:
+
+- Letting consumer of a command generate a [UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier) on a client-side (more info here: [CQS versus server generated IDs](https://blog.ploeh.dk/2014/08/11/cqs-versus-server-generated-ids/));
+- Returning some kind of a redirect location instead of creating a new resource on POST request (described here: [CQRS and REST: the perfect match](https://lostechies.com/jimmybogard/2016/06/01/cqrs-and-rest-the-perfect-match/)).
+
+Though, violating a `Command` CQS rule and returning a bare minimum (like `ID` of created item or a confirmation message) may simplify things for most APIs.
 
 **Note**: `Command` has nothing to do with [Command Pattern](https://refactoring.guru/design-patterns/command), it is just a convenient name to represent that this object invokes a CQS Command. Both `Commands` and `Queries` in this example are just simple objects with data.
 
@@ -245,8 +247,6 @@ Example of command object: [create-user.command.ts](src/modules/user/use-cases/c
 
 Queries are usually just a data retrieval operation and have no business logic involved; so, if needed, application and domain layers can be bypassed completely. Though, if some additional non-state changing logic has to be applied before returning a query response (like calculating something), it should be done in a corresponding application service.
 
-Validation also can be skipped, since no input is persisted in query operations. But, if needed, it can be validated to tell the user that query format is incorrect (when using enums for example).
-
 Example of query bypassing application/domain layers completely: [find-user-by-email.http.controller.ts](src/modules/user/use-cases/find-user-by-email/find-user-by-email.http.controller.ts)
 
 ---
@@ -257,6 +257,7 @@ Read more about CQS:
 
 - [Martin Fowler blog](https://martinfowler.com/bliki/CommandQuerySeparation.html)
 - [Command Query Segregation](https://khalilstemmler.com/articles/oop-design-principles/command-query-segregation/).
+- [Exposing CQRS Through a RESTful API](https://www.infoq.com/articles/rest-api-on-cqrs/)
 
 ---
 
@@ -284,12 +285,15 @@ Domain should only operate using domain objects, most important ones are describ
 
 Entities are the core of the domain. They encapsulate Enterprise wide business rules and attributes. An entity can be an object with properties and methods, or it can be a set of data structures and functions.
 
-Domain business logic goes here. Avoid having business logic in your services when possible, this leads to [Anemic Domain Model](https://martinfowler.com/bliki/AnemicDomainModel.html) (domain services are exception for business logic that can't be put in a single entity).
+Entities represent business models and express what properties a particular model has, what it can do, when and at what conditions it can do it. An example of business model can be a User, Product, Booking, Ticket, Wallet etc.
+
+Entities must always protect it's [invariant](https://en.wikipedia.org/wiki/Class_invariant):
 
 > Domain entities should always be valid entities. There are a certain number of invariants for an object that should always be true. For example, an order item object always has to have a quantity that must be a positive integer, plus an article name and price. Therefore, invariants enforcement is the responsibility of the domain entities (especially of the aggregate root) and an entity object should not be able to exist without being valid.
 
 Entities:
 
+- Contain Domain business logic. Avoid having business logic in your services when possible, this leads to [Anemic Domain Model](https://martinfowler.com/bliki/AnemicDomainModel.html) (domain services are exception for business logic that can't be put in a single entity).
 - Have an identity that defines it and makes it distinguishable from others. It's identity is consistent during its life cycle.
 - Equality between two entities is determined by comparing their identificators (usually its `id` field).
 - Can contain other objects, such as other entities or value objects.
@@ -301,6 +305,7 @@ Entities:
 - Must be consistent on creation. Validate Entities and other domain objects on creation and throw an error on first failure. [Fail Fast](https://en.wikipedia.org/wiki/Fail-fast).
 - Avoid no-arg (empty) constructors, accept and validate all required properties through a constructor.
 - For optional properties that require some complex setting up, [Fluent interface](https://en.wikipedia.org/wiki/Fluent_interface) and [Builder Pattern](https://refactoring.guru/design-patterns/builder) can be used.
+- Make Entities partially immutable. Identify what properties shouldn't change after creation and make them `readonly` (for example `id` or `createdAt`).
 
 Example files:
 
@@ -320,12 +325,16 @@ Read more:
 - Aggregates help to simplify the domain model by gathering multiple domain objects under a single abstraction.
 - Aggregates should not be influenced by data model. Associations between domain objects are not the same as database relationships.
 - Aggregate root is an entity that contains other entities/value objects and all logic to operate them.
+- Aggregate root has global identity. Entities inside the boundary have local identity, unique only within the Aggregate.
 - Aggregate root is a gateway to entire aggregate. Any references from outside the aggregate should **only** go to the aggregate root.
-- Saving an aggregate must be a [transactional operation](https://en.wikipedia.org/wiki/Database_transaction). Either everything gets saved or nothing.
-- Similar to `Entities`, aggregates must protect their invariants through entire lifecycle.
-- Aggregates can reference other aggregates. Prefer references to external aggregates only by their globally unique identity, not by holding a direct object reference.
+- Any operations on an aggregate must be [transactional operations](https://en.wikipedia.org/wiki/Database_transaction). Either everything gets saved/updated/deleted or nothing.
+- Only Aggregate Roots can be obtained directly with database queries. Everything else must be done through traversal.
+- Similar to `Entities`, aggregates must protect their invariants through entire lifecycle. When a change to any object within the Aggregate boundary is committed, all invariants of the whole Aggregate must be satisfied.
+- Objects within the Aggregate can hold references to other Aggregate roots. Prefer references to external aggregates only by their globally unique identity, not by holding a direct object reference.
 - Try to avoid aggregates that are too big, this can lead to performance and maintaining problems.
 - Aggregates can publish `Domain Events` (more on that below).
+
+All of this rules just come from the idea of creating a boundary around Aggregates. The boundary simplifies business model, as it forces us to consider each relationship very carefully, and within a well-defined set of rules.
 
 Example files:
 
@@ -594,30 +603,26 @@ Read more about validation types described above:
 
 ## Using libraries inside application's core
 
-Whether or not to use libraries in application layer and especially domain layer is a subject of a lot of debates. In real world, injecting every library instead of importing it directly is not always practical, so exceptions can be made for some single responsibility libraries that help to implement domain logic (like number converting libraries etc).
+Whether or not to use libraries in application layer and especially domain layer is a subject of a lot of debates. In real world, injecting every library instead of importing it directly is not always practical, so exceptions can be made for some single responsibility libraries that help to implement domain logic (like working with numbers).
 
-Main recommendations to keep in mind is that libraries imported in application's core/domain **shouldn't** expose:
+Main recommendations to keep in mind is that libraries imported in application's core **shouldn't** expose:
 
 - Functionality to access any out-of-process resources (http calls, database access etc);
-- Functionality not relevant to domain (frameworks, technology details like ORMs etc).
+- Functionality not relevant to domain (frameworks, technology details like ORMs, Logger etc).
 - Functionality that brings randomness (generating random IDs, timestamps etc) since this makes tests unpredictable (though in TypeScript world it is not that big of a deal since this can be mocked by a test library without using DI);
+- Frameworks can be a real nuisance because by definition they want to be in control. Isolate them within the adapters and keep our domain model clean of them.
 - If a library changes often or has a lot of dependencies of its own it most likely shouldn't be used in domain layer.
 
 To use such libraries consider creating an `anti-corruption` layer by using [adapter](https://refactoring.guru/design-patterns/adapter) or [facade](https://refactoring.guru/design-patterns/facade) patterns.
 
-Read more:
-
-- [Anti-corruption Layer — An effective Shield](https://medium.com/@malotor/anticorruption-layer-a-effective-shield-caa4d5ba548c)
-
-Be careful with general purpose libraries/frameworks that may scatter across many domain objects. It will be hard to replace those libraries if needed.
-
-Tying only one or just few domain objects to some single-responsibility library should be fine. It is way easier to replace a specific library that is tied to one or few objects than a general purpose library that is everywhere.
+We sometimes tolerate libraries in the center: libraries are not in control so they are less intrusive. But be careful with general purpose libraries that may scatter across many domain objects. It will be hard to replace those libraries if needed. Tying only one or just few domain objects to some single-responsibility library should be fine. It is way easier to replace a specific library that is tied to one or few objects than a general purpose library that is everywhere.
 
 Offload as much of irrelevant responsibilities as possible from the core, especially from domain layer.
 
 Read more:
 
 - [Referencing external libs](https://khorikov.org/posts/2019-08-07-referencing-external-libs/).
+- [Anti-corruption Layer — An effective Shield](https://medium.com/@malotor/anticorruption-layer-a-effective-shield-caa4d5ba548c)
 
 ---
 
@@ -722,20 +727,27 @@ The data flow here looks something like this: repository receives a domain `Enti
 
 This project contains abstract repository class that allows to make basic CRUD operations: [typeorm.repository.base.ts](src/infrastructure/database/base-classes/typeorm.repository.base.ts). This base class is then extended by a specific repository, and all specific operations that an entity may need is implemented in that specific repo: [user.repository.ts](src/modules/user/database/user.repository.ts).
 
-## ORM Entities
+## Persistence models
 
-Using a single entity for domain logic and database concerns leads to a database-centric architecture. In DDD world domain model and persistance model should be separated. If ORM frameworks are used, `ORM Entities` can be created to represent domain entities in a database.
+Using a single entity for domain logic and database concerns leads to a database-centric architecture. In DDD world domain model and persistance model should be separated.
 
-Since domain `Entities` have their data modeled so that it best accommodates domain logic, it may be not in the best shape to save in database. For that purpose `ORM Entities` (or `Schemas`) are used that have shape that is better represented in a particular database that is used.
+Since domain `Entities` have their data modeled so that it best accommodates domain logic, it may be not in the best shape to save in a database. For that purpose `Persistence models` can be created that have a shape that is better represented in a particular database that is used. Domain layer should not know anything about persistance models, and it should not care.
 
-This approach can also be useful when amount of data in database grows and there is a need for re-design of tables (or even database change) to improve performance. When `ORM Entities`/`Schemas` are separated from `Entities` you don't need to touch any domain logic if something in database changes, thus avoiding potential bugs.
+There can be multiple models optimized for different purposes, for example:
 
-**Note**: separating `Entities` and `ORM Entities` may be an overkill for smaller applications, consider all pros and cons before making this decision.
+- Domain with it's own models - `Entities`, `Aggregates` and `Value Objects`.
+- Persistence layer with it's own models - `ORM` for SQL, `Schemas` for NoSQL, `Read/Write` models if databases are separated into a read and write db ([CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation)) etc.
+
+Over time, when the amount of data grows, there may be a need to make some changes in the database, for example: improve performance or data integrity, re-design of some tables, database [normalization](https://en.wikipedia.org/wiki/Database_normalization) / [denormalization](https://en.wikipedia.org/wiki/Denormalization), or even changing the database entirely. Without an explicit separation between `Domain` and `Persistance` models any change to the database will lead to change in your domain `Entities` or `Aggregates`, since, for example, when optimizing database data can spread across multiple tables rather than being in one table. This may force a team to do a complete refactoring of a domain layer which may cause unexpected bugs and challenges. Separating Domain and Persistance models prevents that.
+
+An alternative to using Persistence Models may be raw queries or some sort of a query builder, in this case you may not need to create `ORM Entities` or `Schemas`.
+
+**Note**: separating domain and persistance models may be an overkill for smaller applications, consider all pros and cons before making this decision.
 
 Example files:
 
-- [user.orm-entity.ts](src/modules/user/database/user.orm-entity.ts)
-- [user.orm-mapper.ts](src/modules/user/database/user.orm-mapper.ts) <- `ORM Entities` should also have a corresponding mapper to map from domain to persistence and back.
+- [user.orm-entity.ts](src/modules/user/database/user.orm-entity.ts) <- Persistence model using [ORM](https://en.wikipedia.org/wiki/Object%E2%80%93relational_mapping).
+- [user.orm-mapper.ts](src/modules/user/database/user.orm-mapper.ts) <- Persistence models should also have a corresponding mapper to map from domain to persistence and back.
 
 Read more:
 
@@ -755,14 +767,16 @@ Read more:
 
 # Recommendations for smaller APIs
 
-Be careful when implementing any complex architecture in small-medium sized projects with not a lot of business logic. Some of the building blocks/patterns may fit well, but others may be an overengineering.
+Be careful when implementing any complex architecture in small-medium sized projects with not a lot of business logic. Some of the building blocks/patterns/principles may fit well, but others may be an overengineering.
 
 For example:
 
 - Separating code into modules/layers/use-cases, using some building blocks like controllers/services/entities, respecting boundaries and dependency injections etc. may be a good idea for any project.
-- But practices like creating an object for every primitive, using `Value Objects` to separate business logic into smaller classes, dividing `Entities` and `ORM Entities` etc. in projects that are more data-centric and have little or no business logic may only complicate such solutions and add extra boilerplate code, data mapping etc. without adding much benefit.
+- But practices like creating an object for every primitive, using `Value Objects` to separate business logic into smaller classes, dividing `Entities` and `ORM Entities` etc. in projects that are more data-centric and have little or no business logic may only complicate such solutions and add extra boilerplate code, data mapping, maintenance overheads etc. without adding much benefit.
 
 Some principles/patterns can be implemented in a simplified form, some can be skipped. Follow [YAGNI](https://en.wikipedia.org/wiki/You_aren%27t_gonna_need_it) principle and don't overengineer.
+
+Sometimes complex architecture and principles like [SOLID](https://en.wikipedia.org/wiki/SOLID) can be incompatible with [YAGNI](https://en.wikipedia.org/wiki/You_aren%27t_gonna_need_it) and [KISS](https://en.wikipedia.org/wiki/KISS_principle). A good programmer should be pragmatic and has to be able to combine his skills and knowledge with a common sense to choose the best solution for the problem.
 
 **Before implementing any pattern always analyze if benefit given by using it worth extra code complexity**.
 
@@ -775,6 +789,7 @@ However, remember:
 Read more:
 
 - [Martin Fowler blog: Yagni](https://martinfowler.com/bliki/Yagni.html)
+- [7 Software Development Principles That Should Be Embraced Daily](https://betterprogramming.pub/7-software-development-principles-that-should-be-embraced-daily-c26a94ec4ecc?gi=3b5b298ddc23)
 
 # Other recommendations and best practices
 
@@ -784,22 +799,24 @@ Read more:
 
 Consider extending `Error` object to make custom exception types for different situations. For example: `DomainException` etc. This is especially relevant in NodeJS world since there is no exceptions for different situations by default.
 
-Keep in mind that application's `core` shouldn't throw HTTP exceptions or statuses since it shouldn't know anything about where it is used, since it can be used by anything: HTTP, Microservice, CLI etc. To return proper HTTP code back to user an `instanceof` check can be performed in exception interceptor and appropriate HTTP exception can be returned depending on exception type.
+Keep in mind that application's `core` shouldn't throw HTTP exceptions or statuses since it shouldn't know in what context it is used, since it can be used by anything: HTTP controller, Microservice event handler, Command Line Interface etc.
 
-Exception interceptor example: [exception.interceptor.ts](src/infrastructure/interceptors/exception.interceptor.ts)
+When used in HTTP context, for returning proper status code back to user an `instanceof` check can be performed in exception interceptor or in a controller and appropriate HTTP exception can be returned depending on exception type.
 
-Adding a `name` string with type name for every exception is a good practice, since when that exception is transferred to another process `instanceof` check cannot be performed anymore so a `name` string is used instead. Store exception `name` enum types in a separate file so they can be reused on a receiving side.
+Exception interceptor example: [exception.interceptor.ts](src/infrastructure/interceptors/exception.interceptor.ts) - notice how custom exceptions are converted to nest.js exceptions.
+
+Adding a `name` string with type name for every exception is a good practice, since when that exception is transferred to another process `instanceof` check cannot be performed anymore so a `name` string is used instead. Exception `name` enum types can be stored in a separate file so they can be reused on a receiving side: [exception.types.ts](src/core/exceptions/exception.types.ts).
 
 When using microservices, all exception types can be packed into a library and reused in each microservice for consistency.
 
-### Differentiate between programmer errors and user input errors
+### Differentiate between programmer errors and operational errors
+
+Application should be protected not only from operational errors (like incorrect user input), but from a programmer errors as well by throwing exceptions when something is not used as intended.
 
 For example:
 
-- When validation error is thrown by validating user input, it means that this input is incorrect and a `400 Bad Request Exception` should be returned with details of what fields are incorrect ([notification pattern](https://martinfowler.com/eaaDev/Notification.html)). In this project's code examples it's done automatically in DTOs by [class-validator](https://www.npmjs.com/package/class-validator) library.
-- When validation exception happens on a new domain object creation that usually means a programmer did a mistake by assigning an incorrect value to a constructor, or value got mutated at some point before reaching domain layer, so a different type of error should be thrown here which later should be converted into `500 Internal Server Error`, in this case without adding additional info since it may cause a leak of some sensitive data.
-
-Application should be protected not only from incorrect user input but from a programmer errors as well by throwing exceptions when something is not used as intended. No details should be returned to the user in case of programmer errors since those details may contain some sensitive information about the program.
+- Operational errors can happen when validation error is thrown by validating user input, it means that input body is incorrect and a `400 Bad Request` exception should be returned to the user with details of what fields are incorrect ([notification pattern](https://martinfowler.com/eaaDev/Notification.html)). In this case user can fix the input body and retry the request.
+- On the other hand, programmer error means something unexpected occurs in the program. For example, when exception happens on a new domain object creation, sometimes it can mean that a class is not used as intended and some rule is violated, for example a programmer did a mistake by assigning an incorrect value to a constructor, or value got mutated at some point and is no longer valid. In this case user cannot do anything to fix this, only a programmer can, so it may be more appropriate to throw a different type of exception that should be logged and then returned to the user as `500 Internal Server Error`, in this case without adding much additional details to the response since it may cause a leak of some sensitive data.
 
 ### Error Serialization
 
@@ -817,22 +834,52 @@ Consider serializing errors by creating a `toJSON()` method so it can be easily 
 
 Consider adding optional `metadata` object to exceptions (if language doesn't support anything similar by default) and pass some useful technical information about the error when throwing. This will make debugging easier.
 
-**Important to keep in mind**: never log or add to `metadata` any sensitive information (like passwords, emails, phone numbers etc) since this information may leak into log files. Aim adding only technical information.
+**Important to keep in mind**: never log or add to `metadata` any sensitive information (like passwords, emails, phone or credit card numbers etc) since this information may leak into log files, and if log files are not protected properly this information can leak or be seen by developers who have access to log files. Aim adding only technical information to your logs.
 
 ### Other recommendations
 
-- If translations of error messages to other languages is needed, consider storing those error messages in a separate object/class rather than inline string literals.
+- If translations of error messages to other languages is needed, consider storing those error messages in a separate object/class rather than inline string literals. This will make it easier to implement localization by adding conditional getters.
 
 Example files:
 
 - [exception.base.ts](src/core/exceptions/exception.base.ts) - Exception abstract base class
 - [domain.exception.ts](src/core/exceptions/domain.exception.ts) - Domain Exception class example
-- Check [exceptions]([src/core/exception]) folder to see more examples (some of them are exceptions from other languages like C# or Java)
+- Check [exceptions](src/core/exceptions) folder to see more examples (some of them are exceptions from other languages like C# or Java)
 
 Read more:
 
 - [Better error handling in JavaScript](https://iaincollins.medium.com/error-handling-in-javascript-a6172ccdf9af)
 - ["Secure by design" Chapter 9: Handling failures securely](https://livebook.manning.com/book/secure-by-design/chapter-9/)
+
+### Alternatives to exceptions
+
+There is an alternative approach of not throwing exceptions, but returning some kind of Result object type with a Success or a Failure (an `Either` [monad](<https://en.wikipedia.org/wiki/Monad_(functional_programming)>) from functional languages like Haskell). Unlike throwing exceptions, this approach allows to define types for exceptional outcomes and will force us to handle those cases explicitly instead of using `try/catch`. For example:
+
+```typescript
+class User {
+  // ...
+  public createUser(): Either<User, EmailInvalidException> {
+    // ...code for creating a user
+    if (invalidEmail) {
+      return EmailInvalidException; // <- returning instead of throwing
+    }
+    return User;
+  }
+}
+```
+
+This approach has its advantages and may work nicely in some languages, especially in functional languages which support `Either` type natively, but is not widely used in TypeScript/Javascript world.
+
+It also has some downsides:
+
+- It goes against [Fail-fast](https://en.wikipedia.org/wiki/Fail-fast) principle. Instead of terminating a program flow, this approach continues program execution and allows it to run in an incorrect state, which may lead to more unexpected errors.
+- It adds extra complexity. Exception cases returned somewhere deep inside application have to be handled by functions in upper layers until it reaches controllers which may add a lot of extra `if` statements.
+
+For most projects this approach may be an overkill. Use it only if you really need it and know what you are doing.
+
+Read more:
+
+- ["Secure by Design" Chapter 9.2: Handling failures without exceptions](https://livebook.manning.com/book/secure-by-design/chapter-9/51)
 
 ## Testing
 
@@ -869,10 +916,6 @@ Behavioral tests can be divided in two parts:
 
 **Note**: some people try to make e2e tests faster by using in-memory or embedded databases (like [sqlite3](https://www.npmjs.com/package/sqlite3)). This makes tests faster, but reduces the reliability of those tests. In real e2e testing this should be avoided. Read more: [Don't use In-Memory Databases for Tests](https://phauer.com/2017/dont-use-in-memory-databases-tests-h2/).
 
-### Load Testing
-
-For projects with a bigger user base you might want to implement some kind of [load testing](https://en.wikipedia.org/wiki/Load_testing) to see how program behaves with a lot of concurrent users. [Artillery](https://www.npmjs.com/package/artillery) is a nice tool for that based on NodeJS. Though, there are plenty of other tools to choose from: [Top 6 Tools for API & Load Testing](https://medium.com/@Dickson_Mwendia/top-6-tools-for-api-load-testing-7ff51d1ac1e8).
-
 Example files: // TODO
 
 Read more:
@@ -880,6 +923,14 @@ Read more:
 - [Pragmatic unit testing](https://enterprisecraftsmanship.com/posts/pragmatic-unit-testing/)
 - [Google Blog: Test Behavior, Not Implementation ](https://testing.googleblog.com/2013/08/testing-on-toilet-test-behavior-not.html)
 - [Writing BDD Test Scenarios](https://www.departmentofproduct.com/blog/writing-bdd-test-scenarios/)
+
+### Load Testing
+
+For projects with a bigger user base you might want to implement some kind of [load testing](https://en.wikipedia.org/wiki/Load_testing) to see how program behaves with a lot of concurrent users. [Artillery](https://www.npmjs.com/package/artillery) is a nice tool for that based on NodeJS. Though, there are plenty of other tools to choose from.
+
+Read more:
+
+- [Top 6 Tools for API & Load Testing](https://medium.com/@Dickson_Mwendia/top-6-tools-for-api-load-testing-7ff51d1ac1e8).
 
 ## Configuration
 
